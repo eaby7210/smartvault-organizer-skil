@@ -35,7 +35,6 @@ claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-s
 claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-skil; claude plugin install smartvault-organizer@smartvault-organizer-marketplace
 ```
 
-> Replace `<owner>` and `<repo>` with the actual GitHub username and repository name.
 
 **Step 4 — Configure credentials:**
 
