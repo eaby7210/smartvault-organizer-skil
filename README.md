@@ -45,6 +45,33 @@ Claude will walk you through entering your SmartVault OAuth credentials. Nothing
 
 ---
 
+## Offline Installation (ZIP)
+
+No internet access or git required after downloading.
+
+**Download the ZIP:**
+- Go to [github.com/eaby7210/smartvault-organizer-skil](https://github.com/eaby7210/smartvault-organizer-skil)
+- Click **Code → Download ZIP**
+- Or direct link: [Download ZIP](https://github.com/eaby7210/smartvault-organizer-skil/archive/refs/heads/main.zip)
+
+**Install on Linux / Mac:**
+```bash
+unzip smartvault-organizer-skil-main.zip
+cd smartvault-organizer-skil-main
+bash install.sh
+```
+
+**Install on Windows (PowerShell):**
+```powershell
+Expand-Archive smartvault-organizer-skil-main.zip
+cd smartvault-organizer-skil-main
+.\install.ps1
+```
+
+Then open Claude Code and run `/reload-plugins`.
+
+---
+
 ## Requirements
 
 - A SmartVault account with OAuth app credentials
