@@ -2,11 +2,11 @@
 
 A Claude Code skill that organizes SmartVault client vaults — renames files using standardized conventions and moves them into the correct subfolders.
 
-> **Recommended:** Run this skill through the **Claude Code CLI** (terminal). It provides persistent progress tracking, pause/resume, and revert across sessions. The web app and Claude for Work are supported but progress is lost when the session ends — see [Using the Web App or Claude for Work?](#using-the-web-app-or-claude-for-work) below.
+> **Recommended:** Run this skill through the **[Claude Code CLI](https://code.claude.com/docs/en/quickstart)** (terminal). It provides persistent progress tracking, pause/resume, and revert across sessions. The web app and Claude for Work are supported but progress is lost when the session ends — see [Using the Web App or Claude for Work?](#using-the-web-app-or-claude-for-work) below.
 
 ## Installation
 
-> Requires [Claude Code CLI](https://claude.ai/code) installed. Run these commands in your terminal.
+> Requires [Claude Code CLI](https://code.claude.com/docs/en/quickstart) installed. Run these commands in your terminal.
 
 **Step 1 — Add the skill repository:**
 
