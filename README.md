@@ -17,7 +17,7 @@ claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-s
 **Step 2 — Install the skill:**
 
 ```bash
-claude plugin install smartvault-organizer@eaby7210-smartvault-organizer-skil
+claude plugin install smartvault-organizer@smartvault-organizer-marketplace
 ```
 
 **Step 3 — Reload plugins:**
@@ -27,12 +27,12 @@ claude plugin install smartvault-organizer@eaby7210-smartvault-organizer-skil
 
 **One-liner (Linux / Mac):**
 ```bash
-claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-skil && claude plugin install smartvault-organizer@eaby7210-smartvault-organizer-skil
+claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-skil && claude plugin install smartvault-organizer@smartvault-organizer-marketplace
 ```
 
 **One-liner (Windows PowerShell):**
 ```powershell
-claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-skil; claude plugin install smartvault-organizer@eaby7210-smartvault-organizer-skil
+claude plugin marketplace add https://github.com/eaby7210/smartvault-organizer-skil; claude plugin install smartvault-organizer@smartvault-organizer-marketplace
 ```
 
 > Replace `<owner>` and `<repo>` with the actual GitHub username and repository name.
