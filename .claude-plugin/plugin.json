@@ -7,9 +7,6 @@
     "email": "dev@advancedtaxgroup.com"
   },
   "homepage": "https://github.com/eaby7210/smartvault-organizer-skil",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/eaby7210/smartvault-organizer-skil.git"
-  },
+  "repository": "https://github.com/eaby7210/smartvault-organizer-skil.git",
   "license": "MIT"
 }
