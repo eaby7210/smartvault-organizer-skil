@@ -1,0 +1,15 @@
+{
+  "name": "smartvault-organizer",
+  "description": "Organizes SmartVault client vaults — renames files using standardized conventions and moves them into the correct subfolders.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Advanced Tax Group",
+    "email": "dev@advancedtaxgroup.com"
+  },
+  "homepage": "https://github.com/eaby7210/smartvault-organizer-skil",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eaby7210/smartvault-organizer-skil.git"
+  },
+  "license": "MIT"
+}

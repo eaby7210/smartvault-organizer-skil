@@ -1,0 +1,26 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "smartvault-organizer-marketplace",
+  "description": "SmartVault document organizer skill for accounting firms",
+  "owner": {
+    "name": "Advanced Tax Group",
+    "email": "dev@advancedtaxgroup.com"
+  },
+  "plugins": [
+    {
+      "name": "smartvault-organizer",
+      "description": "Organizes SmartVault client vaults — renames files using standardized conventions and moves them into the correct subfolders.",
+      "author": {
+        "name": "Advanced Tax Group",
+        "email": "dev@advancedtaxgroup.com"
+      },
+      "source": {
+        "source": "git",
+        "url": "https://github.com/eaby7210/smartvault-organizer-skil.git"
+      },
+      "category": "productivity",
+      "version": "1.0.0",
+      "homepage": "https://github.com/eaby7210/smartvault-organizer-skil"
+    }
+  ]
+}
