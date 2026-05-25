@@ -14,13 +14,8 @@
         "name": "Advanced Tax Group",
         "email": "dev@advancedtaxgroup.com"
       },
-      "source": {
-        "source": "git",
-        "url": "https://github.com/eaby7210/smartvault-organizer-skil.git"
-      },
-      "category": "productivity",
-      "version": "1.0.0",
-      "homepage": "https://github.com/eaby7210/smartvault-organizer-skil"
+      "source": "./",
+      "category": "productivity"
     }
   ]
 }
