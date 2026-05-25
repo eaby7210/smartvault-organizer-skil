@@ -1,0 +1,7 @@
+{
+  "client_id": "your-oauth-client-id",
+  "client_secret": "your-oauth-client-secret",
+  "redirect_uri": "http://localhost:8000/oauth/callback/",
+  "email": "you@example.com",
+  "api_base": "https://rest.smartvault.com"
+}

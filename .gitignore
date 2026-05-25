@@ -1,0 +1,20 @@
+# secrets & tokens
+.mcp_state/.token
+.mcp_state/config.json
+
+# runtime DB (contains client PII)
+.mcp_state/app.db
+.mcp_state/app.db-wal
+.mcp_state/app.db-shm
+
+# downloaded client docs (sensitive + large)
+temp_docs/
+
+# report outputs (contain client data)
+completed_clients.csv
+failed_or_unready_clients.csv
+
+# python
+__pycache__/
+*.pyc
+*.pyo
