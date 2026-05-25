@@ -186,13 +186,11 @@ def api_get_bytes(path, token, config):
         raise RuntimeError(f"HTTP {e.code}: {body[:200]}")
 
 
-def api_put(path, token, config, body):
+def api_put(path, token, config):
     url = _base(config) + path
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="PUT", headers={
+    req = urllib.request.Request(url, method="PUT", headers={
         "Authorization": _auth_header(token, config),
         "Accept": "application/json",
-        "Content-Type": "application/json",
     })
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -906,7 +904,6 @@ def cmd_process_file(args):
             cr = api_put(
                 f"/nodes/pth/{pth_enc(target_folder_path)}",
                 token, config,
-                {"createFolder": {"name": args.target_folder}},
             )
             if not (cr.get("error") or {}).get("success"):
                 raise RuntimeError(f"Folder create error: {cr}")
@@ -925,7 +922,7 @@ def cmd_process_file(args):
     src_folder = source_path.rsplit("/", 1)[0]
     src_filename = source_path.rsplit("/", 1)[1]
     api_path = f"/nodes/pth/{pth_enc(src_folder)}/{urllib.parse.quote(src_filename, safe='')}"
-    body = {"message": {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}}
+    body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
 
     move_error = None
     try:
@@ -1161,7 +1158,7 @@ def cmd_rename_client(args):
     orig_vault = row["original_vault_path"] or vault_path
     orig_display = row["original_display_name"] or row["display_name"]
 
-    body = {"message": {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}}
+    body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
 
     try:
         result = api_post(f"/nodes/pth/{pth_enc(vault_path)}", token, config, body)
@@ -1250,7 +1247,7 @@ def cmd_revert_client(args):
         src_folder   = current_path.rsplit("/", 1)[0]
         src_filename = current_path.rsplit("/", 1)[1]
         api_path = f"/nodes/pth/{pth_enc(src_folder)}/{urllib.parse.quote(src_filename, safe='')}"
-        body = {"message": {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}}
+        body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
 
         try:
             result = api_post(api_path, token, config, body)
@@ -1268,7 +1265,7 @@ def cmd_revert_client(args):
     folder_reverted = False
     orig_vault = client_row["original_vault_path"]
     if orig_vault and orig_vault != client_row["vault_path"]:
-        body = {"message": {"move": {"dst_uri": f"/nodes/pth/{pth_enc(orig_vault)}", "replace": "Replace"}}}
+        body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(orig_vault)}", "replace": "Replace"}}
         try:
             result = api_post(f"/nodes/pth/{pth_enc(client_row['vault_path'])}", token, config, body)
             if not (result.get("error") or {}).get("success"):
