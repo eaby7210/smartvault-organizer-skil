@@ -186,6 +186,20 @@ def api_get_bytes(path, token, config):
         raise RuntimeError(f"HTTP {e.code}: {body[:200]}")
 
 
+def api_delete(path, token, config):
+    url = _base(config) + path
+    req = urllib.request.Request(url, method="DELETE", headers={
+        "Authorization": _auth_header(token, config),
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:500]}")
+
+
 def pth_enc(path):
     return urllib.parse.quote(path, safe="/")
 
@@ -684,6 +698,7 @@ def cmd_sync_clients(_args):
 
 def cmd_stage_client_files(args):
     client_id = args.client_id
+    list_only = getattr(args, "list_only", False)
     token, config = get_valid_token()
     if token is None:
         _die({"status": "error", "message": "Not authenticated."})
@@ -696,9 +711,10 @@ def cmd_stage_client_files(args):
 
     vault_path = row["vault_path"]
     client_temp = os.path.join(TEMP_DIR, client_id)
-    os.makedirs(client_temp, exist_ok=True)
+    if not list_only:
+        os.makedirs(client_temp, exist_ok=True)
 
-    downloaded = []
+    results = []
 
     def _walk(folder_path, depth=0):
         if depth > 8:
@@ -711,7 +727,7 @@ def cmd_stage_client_files(args):
             node_type = child.get("nodeType", "")
             child_name = child.get("name", "")
             if node_type == "FileNodeType":
-                _stage_one(child, client_id, folder_path, client_temp, downloaded, conn, token, config)
+                _stage_one(child, client_id, folder_path, client_temp, results, conn, token, config, list_only)
             elif node_type in ("FolderNodeType", "VaultNodeType", "ContainerNodeType"):
                 if child_name in RESTRICTED_FOLDERS:
                     continue
@@ -729,10 +745,10 @@ def cmd_stage_client_files(args):
 
     conn.commit()
     conn.close()
-    print(json.dumps(downloaded))
+    print(json.dumps(results))
 
 
-def _stage_one(raw, client_id, folder_path, client_temp, downloaded, conn, token, config):
+def _stage_one(raw, client_id, folder_path, client_temp, results, conn, token, config, list_only=False):
     name = raw.get("name", "")
     uri = raw.get("uri", "")
     file_path = uri.removeprefix("/nodes/pth/") if uri else ""
@@ -769,6 +785,15 @@ def _stage_one(raw, client_id, folder_path, client_temp, downloaded, conn, token
         return
 
     file_db_id = db_row["id"]
+
+    if list_only:
+        results.append({
+            "file_id": file_db_id,
+            "name": name,
+            "folder_path": folder_path,
+        })
+        return
+
     local_path = os.path.join(client_temp, f"{file_db_id}_{name}")
 
     try:
@@ -777,7 +802,7 @@ def _stage_one(raw, client_id, folder_path, client_temp, downloaded, conn, token
         with open(local_path, "wb") as f:
             f.write(file_bytes)
         conn.execute("UPDATE files SET local_path=? WHERE id=?", (local_path, file_db_id))
-        downloaded.append({
+        results.append({
             "file_id": file_db_id,
             "local_path": local_path,
             "name": name,
@@ -787,6 +812,49 @@ def _stage_one(raw, client_id, folder_path, client_temp, downloaded, conn, token
         conn.execute(
             "UPDATE files SET categorization_status='failed' WHERE id=?", (file_db_id,)
         )
+
+
+def cmd_download_file_batch(args):
+    client_id = args.client_id
+    file_ids = [int(x.strip()) for x in args.file_ids.split(",") if x.strip()]
+    token, config = get_valid_token()
+    if token is None:
+        _die({"status": "error", "message": "Not authenticated."})
+
+    conn = get_db()
+    client_temp = os.path.join(TEMP_DIR, client_id)
+    os.makedirs(client_temp, exist_ok=True)
+
+    downloaded = []
+    for file_id in file_ids:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+        if not row or row["categorization_status"] == "completed":
+            continue
+        name = row["name"]
+        doc_id = _doc_id(row["download_uri"], row["link_uri"])
+        if not doc_id:
+            continue
+        local_path = os.path.join(client_temp, f"{file_id}_{name}")
+        try:
+            encoded_doc_id = urllib.parse.quote(doc_id, safe="")
+            file_bytes = api_get_bytes(f"/files/id/Document/{encoded_doc_id}", token, config)
+            with open(local_path, "wb") as f:
+                f.write(file_bytes)
+            conn.execute("UPDATE files SET local_path=? WHERE id=?", (local_path, file_id))
+            downloaded.append({
+                "file_id": file_id,
+                "local_path": local_path,
+                "name": name,
+                "folder_path": row["folder_path"],
+            })
+        except Exception as e:
+            conn.execute(
+                "UPDATE files SET categorization_status='failed' WHERE id=?", (file_id,)
+            )
+
+    conn.commit()
+    conn.close()
+    print(json.dumps(downloaded))
 
 
 def cmd_process_file(args):
@@ -811,23 +879,115 @@ def cmd_process_file(args):
     vault_path = client_row["vault_path"]
     dest_path = f"{vault_path}/{args.target_folder}/{args.new_name}"
 
+    # Ensure target subfolder exists; create via API if missing
+    target_folder_path = f"{vault_path}/{args.target_folder}"
+    folder_exists = conn.execute(
+        "SELECT 1 FROM folders WHERE client_entity_id=? AND path=?",
+        (file_row["client_entity_id"], target_folder_path)
+    ).fetchone()
+    if not folder_exists:
+        try:
+            cr = api_post(
+                f"/nodes/pth/{pth_enc(vault_path)}",
+                token, config,
+                {"folder": {"name": args.target_folder}},
+            )
+            if not (cr.get("error") or {}).get("success"):
+                raise RuntimeError(f"Folder create error: {cr}")
+            conn.execute("""
+                INSERT OR IGNORE INTO folders
+                    (client_entity_id, name, path, parent_path, node_type, is_root, updated_at)
+                VALUES (?,?,?,?,'FolderNodeType',0,datetime('now'))
+            """, (file_row["client_entity_id"], args.target_folder,
+                  target_folder_path, vault_path))
+            conn.commit()
+        except Exception as e:
+            conn.close()
+            _die({"status": "error",
+                  "message": f"Could not create target folder '{args.target_folder}': {_clean_err(e)}"})
+
     src_folder = source_path.rsplit("/", 1)[0]
     src_filename = source_path.rsplit("/", 1)[1]
     api_path = f"/nodes/pth/{pth_enc(src_folder)}/{urllib.parse.quote(src_filename, safe='')}"
     body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
 
+    move_error = None
     try:
         result = api_post(api_path, token, config, body)
         if not (result.get("error") or {}).get("success"):
             raise RuntimeError(f"API error: {result}")
     except Exception as e:
-        conn.execute(
-            "UPDATE files SET categorization_status='failed', updated_at=datetime('now') WHERE id=?",
-            (args.file_id,)
-        )
-        conn.commit()
-        conn.close()
-        _die({"status": "error", "message": _clean_err(e)})
+        move_error = e
+
+    if move_error is not None:
+        # Check whether a file already exists at the destination
+        dest_is_file = False
+        dest_size = 0
+        dest_download_uri = ""
+        dest_link_uri = ""
+        try:
+            dest_meta = api_get(f"/nodes/pth/{pth_enc(dest_path)}", token, config)
+            dest_msg = dest_meta.get("message") or {}
+            if dest_msg.get("nodeType") == "FileNodeType":
+                dest_is_file = True
+                dest_size = int(dest_msg.get("size") or 0)
+                dest_download_uri = dest_msg.get("download_uri", "")
+                dest_link_uri = dest_msg.get("link_uri", "")
+        except Exception:
+            pass
+
+        if dest_is_file:
+            src_size = file_row["size"]
+            if src_size > 0 and src_size == dest_size:
+                # Same size — high confidence duplicate; delete source
+                try:
+                    api_delete(f"/nodes/pth/{pth_enc(source_path)}", token, config)
+                    conn.execute("""
+                        UPDATE files SET
+                            categorization_status='completed', new_name=?, target_folder=?,
+                            updated_at=datetime('now')
+                        WHERE id=?
+                    """, (args.new_name, args.target_folder, args.file_id))
+                    conn.commit()
+                    conn.close()
+                    print(json.dumps({
+                        "status": "ok",
+                        "file_id": args.file_id,
+                        "moved_to": dest_path,
+                        "note": "duplicate_resolved_by_size",
+                    }))
+                    return
+                except Exception as del_e:
+                    conn.execute(
+                        "UPDATE files SET categorization_status='failed', updated_at=datetime('now') WHERE id=?",
+                        (args.file_id,)
+                    )
+                    conn.commit()
+                    conn.close()
+                    _die({"status": "error",
+                          "message": f"Duplicate confirmed but source delete failed: {_clean_err(del_e)}"})
+            else:
+                # Size mismatch or unknown — need content comparison
+                conn.close()
+                _die({
+                    "status": "duplicate_uncertain",
+                    "file_id": args.file_id,
+                    "source_size": src_size,
+                    "dest_size": dest_size,
+                    "dest_path": dest_path,
+                    "dest_download_uri": dest_download_uri,
+                    "dest_link_uri": dest_link_uri,
+                    "message": "File exists at destination with different size; content comparison needed.",
+                })
+        else:
+            # No file at destination — genuine move failure
+            conn.execute(
+                "UPDATE files SET categorization_status='failed', updated_at=datetime('now') WHERE id=?",
+                (args.file_id,)
+            )
+            conn.commit()
+            conn.close()
+            _die({"status": "error", "message": _clean_err(move_error)})
 
     conn.execute("""
         UPDATE files SET
@@ -840,6 +1000,80 @@ def cmd_process_file(args):
     print(json.dumps({"status": "ok", "file_id": args.file_id, "moved_to": dest_path}))
 
 
+def cmd_fetch_dest_file(args):
+    dest_path = args.dest_path
+    token, config = get_valid_token()
+    if token is None:
+        _die({"status": "error", "message": "Not authenticated."})
+
+    try:
+        meta = api_get(f"/nodes/pth/{pth_enc(dest_path)}", token, config)
+        msg = meta.get("message") or {}
+        if msg.get("nodeType") != "FileNodeType":
+            _die({"status": "error", "message": f"No file found at: {dest_path}"})
+    except Exception as e:
+        _die({"status": "error", "message": f"Could not fetch metadata: {_clean_err(e)}"})
+
+    doc_id = _doc_id(msg.get("download_uri", ""), msg.get("link_uri", ""))
+    if not doc_id:
+        _die({"status": "error", "message": "Could not extract document ID from destination metadata."})
+
+    name = msg.get("name", dest_path.rsplit("/", 1)[-1])
+    compare_dir = os.path.join(TEMP_DIR, "dest_compare")
+    os.makedirs(compare_dir, exist_ok=True)
+    local_path = os.path.join(compare_dir, f"{int(time.time())}_{name}")
+
+    try:
+        encoded_doc_id = urllib.parse.quote(doc_id, safe="")
+        file_bytes = api_get_bytes(f"/files/id/Document/{encoded_doc_id}", token, config)
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+    except Exception as e:
+        _die({"status": "error", "message": f"Could not download destination file: {_clean_err(e)}"})
+
+    print(json.dumps({
+        "status": "ok",
+        "local_path": local_path,
+        "size": int(msg.get("size") or 0),
+        "modified_on": msg.get("modifiedOn", ""),
+        "name": name,
+    }))
+
+
+def cmd_delete_source_file(args):
+    token, config = get_valid_token()
+    if token is None:
+        _die({"status": "error", "message": "Not authenticated."})
+
+    conn = get_db()
+    row = conn.execute("SELECT * FROM files WHERE id=?", (args.file_id,)).fetchone()
+    if not row:
+        conn.close()
+        _die({"status": "error", "message": f"File {args.file_id} not found."})
+
+    source_path = row["path"]
+
+    try:
+        api_delete(f"/nodes/pth/{pth_enc(source_path)}", token, config)
+    except Exception as e:
+        conn.close()
+        _die({"status": "error", "message": f"Could not delete source file: {_clean_err(e)}"})
+
+    conn.execute("""
+        UPDATE files SET
+            categorization_status='completed', new_name=?, target_folder=?,
+            updated_at=datetime('now')
+        WHERE id=?
+    """, (args.new_name, args.target_folder, args.file_id))
+    conn.commit()
+    conn.close()
+    print(json.dumps({
+        "status": "ok",
+        "file_id": args.file_id,
+        "note": "duplicate_resolved_by_content",
+    }))
+
+
 def cmd_cleanup_temp(args):
     client_temp = os.path.join(TEMP_DIR, args.client_id)
     if os.path.exists(client_temp):
@@ -847,6 +1081,48 @@ def cmd_cleanup_temp(args):
         print(json.dumps({"status": "ok", "deleted": client_temp}))
     else:
         print(json.dumps({"status": "ok", "message": f"{client_temp} not found, nothing to delete"}))
+
+
+def cmd_cleanup_empty_folders(args):
+    client_id = args.client_id
+    token, config = get_valid_token()
+    if token is None:
+        _die({"status": "error", "message": "Not authenticated."})
+
+    conn = get_db()
+    placeholders = ",".join("?" * len(RESTRICTED_FOLDERS))
+    rows = conn.execute(
+        f"SELECT name, path FROM folders WHERE client_entity_id=? AND is_root=0 AND name NOT IN ({placeholders})",
+        (client_id, *RESTRICTED_FOLDERS),
+    ).fetchall()
+    conn.close()
+
+    deleted = []
+    non_empty = []
+
+    for row in rows:
+        folder_name = row["name"]
+        folder_path = row["path"]
+        try:
+            children = _pth_children(folder_path, token, config)
+            if not children:
+                api_delete(f"/nodes/pth/{pth_enc(folder_path)}", token, config)
+                deleted.append({"name": folder_name, "path": folder_path})
+            else:
+                non_empty.append({
+                    "name": folder_name,
+                    "path": folder_path,
+                    "child_count": len(children),
+                })
+        except Exception as e:
+            non_empty.append({
+                "name": folder_name,
+                "path": folder_path,
+                "error": _clean_err(e),
+            })
+        time.sleep(0.1)
+
+    print(json.dumps({"status": "ok", "deleted": deleted, "non_empty": non_empty}))
 
 
 def cmd_rename_client(args):
@@ -1080,8 +1356,16 @@ def main():
     sub.add_parser("sync_clients", help="Sync all clients from SmartVault API; output ready IDs")
 
     stage_p = sub.add_parser("stage_client_files",
-                              help="Download unprocessed files for one client to temp_docs/<client_id>/")
+                              help="Walk vault and record file metadata; use --list-only to skip download")
     stage_p.add_argument("--client_id", required=True)
+    stage_p.add_argument("--list-only", dest="list_only", action="store_true", default=False,
+                         help="Return file metadata without downloading (use download_file_batch for batched downloads)")
+
+    batch_p = sub.add_parser("download_file_batch",
+                              help="Download specific files by DB ID to temp_docs/<client_id>/")
+    batch_p.add_argument("--client_id", required=True)
+    batch_p.add_argument("--file-ids", dest="file_ids", required=True,
+                         help="Comma-separated file DB IDs to download, e.g. '1,2,3'")
 
     proc_p = sub.add_parser("process_file", help="Move/rename one file via API and mark completed")
     proc_p.add_argument("--file_id",      required=True, type=int)
@@ -1089,8 +1373,23 @@ def main():
     proc_p.add_argument("--target_folder",required=True,
                         help="One of: EIN Letter, Receipts, Tax Documents, Entity Documents, Organizer, Miscellaneous")
 
+    fetch_dest_p = sub.add_parser("fetch_dest_file",
+                                   help="Download a destination file by vault path for duplicate content comparison")
+    fetch_dest_p.add_argument("--dest-path", dest="dest_path", required=True,
+                               help="Full vault path of the file to download")
+
+    del_src_p = sub.add_parser("delete_source_file",
+                                help="Delete source file from vault and mark DB record as completed (confirmed duplicate)")
+    del_src_p.add_argument("--file_id", required=True, type=int)
+    del_src_p.add_argument("--new-name", dest="new_name", required=True)
+    del_src_p.add_argument("--target-folder", dest="target_folder", required=True)
+
     cleanup_p = sub.add_parser("cleanup_temp", help="Delete temp_docs/<client_id>/ to free disk space")
     cleanup_p.add_argument("--client_id", required=True)
+
+    cef_p = sub.add_parser("cleanup_empty_folders",
+                            help="Delete empty non-standard subfolders from client vault via API")
+    cef_p.add_argument("--client_id", required=True)
 
     rename_p = sub.add_parser("rename_client", help="Rename client root folder in SmartVault")
     rename_p.add_argument("--client_id", required=True)
@@ -1112,9 +1411,13 @@ def main():
         "configure":           cmd_configure,
         "auth":                cmd_auth,
         "sync_clients":        cmd_sync_clients,
-        "stage_client_files":  cmd_stage_client_files,
-        "process_file":        cmd_process_file,
-        "cleanup_temp":        cmd_cleanup_temp,
+        "stage_client_files":   cmd_stage_client_files,
+        "download_file_batch":  cmd_download_file_batch,
+        "process_file":         cmd_process_file,
+        "fetch_dest_file":      cmd_fetch_dest_file,
+        "delete_source_file":   cmd_delete_source_file,
+        "cleanup_temp":         cmd_cleanup_temp,
+        "cleanup_empty_folders": cmd_cleanup_empty_folders,
         "rename_client":       cmd_rename_client,
         "pause":               cmd_pause,
         "resume":              cmd_resume,

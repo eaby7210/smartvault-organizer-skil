@@ -201,31 +201,48 @@ Do not process any more clients until the user resumes.
 
 ---
 
-### Step 3.1 — Stage files for this client
+### Step 3.1 — List files for this client (no download)
 
 ```bash
-python scripts/main.py stage_client_files --client_id <client_id>
+python scripts/main.py stage_client_files --client_id <client_id> --list-only
 ```
 
-Output is a JSON array of staged files (unorganized files downloaded to a temp folder).
-Files already in the 6 standard subfolders are intentionally skipped.
+Walks the client vault, writes file metadata to the DB, and returns a JSON array of
+unorganized files. Files already in the 6 standard subfolders are intentionally skipped.
+**No files are downloaded at this step.**
 
 Example output:
 ```json
 [
-  {"file_id": 42, "local_path": "./temp_docs/<client_id>/42_ein_letter.pdf", "name": "ein_letter.pdf", "folder_path": "..."},
-  {"file_id": 43, "local_path": "./temp_docs/<client_id>/43_receipt_amazon.pdf", "name": "receipt_amazon.pdf", "folder_path": "..."}
+  {"file_id": 42, "name": "ein_letter.pdf", "folder_path": "..."},
+  {"file_id": 43, "name": "receipt_amazon.pdf", "folder_path": "..."}
 ]
 ```
 
-If the array is empty → skip to Step 3.4 (cleanup) then Step 3.5 (rename).
+If the array is empty → skip to Step 3.5 (cleanup) then Step 3.6 (rename).
+
+Store the full list in memory. Split it into consecutive **batches of 3** file entries.
 
 ---
 
-### Step 3.2 — AI document analysis
+### Steps 3.2 + 3.3 — Batch download, analyse, and process (3 files at a time)
 
-For **every** file in the staged list, read the file at its `local_path` using your
-native document reading / vision capabilities:
+Repeat the following loop for each batch of 3 (or fewer for the last batch):
+
+**3.2a — Download the batch**
+
+```bash
+python scripts/main.py download_file_batch \
+  --client_id <client_id> \
+  --file-ids "<id1>,<id2>,<id3>"
+```
+
+Returns a JSON array with `file_id`, `local_path`, `name`, and `folder_path` for each
+downloaded file.
+
+**3.2b — Read and classify**
+
+For each file returned, read it using your native document reading / vision capabilities:
 
 ```
 Read: <local_path>
@@ -236,7 +253,7 @@ For each file, determine:
 1. **Document type** — classify as one of:
    `EIN Letter` | `Receipt` | `Tax Document` | `Entity Document` | `Organizer` | `Miscellaneous`
 
-2. **Target folder** — map type using the table above.
+2. **Target folder** — map type using the naming table above.
 
 3. **New filename** — apply the naming pattern:
    - **EIN Letter:** Extract issuing entity/taxpayer name and issue/effective date.
@@ -254,13 +271,9 @@ For each file, determine:
    - **Entity Document / Miscellaneous:** Keep the original `name` from the staged file
      entry unchanged.
 
-Build a processing plan — a list of `{file_id, new_name, target_folder}` objects.
+**3.2c — Process and immediately clean up this batch**
 
----
-
-### Step 3.3 — Process each file
-
-For **each entry** in the processing plan, run:
+For each file in the batch:
 
 ```bash
 python scripts/main.py process_file \
@@ -269,24 +282,83 @@ python scripts/main.py process_file \
   --target_folder "<target_folder>"
 ```
 
-- On `"status": "ok"` → continue to next file.
-- On `"status": "error"` → log the error and continue; do not abort.
+- On `"status": "ok"` (including `"note": "duplicate_resolved_by_size"`) → delete the local
+  temp file immediately:
+  ```bash
+  rm "<local_path>"
+  ```
+- On `"status": "duplicate_uncertain"` → the move failed because a file with the same name
+  already exists at the destination, but sizes differ. Content comparison needed:
+
+  1. Download the destination file:
+     ```bash
+     python scripts/main.py fetch_dest_file --dest-path "<dest_path from response>"
+     ```
+  2. Read the source file (still in temp from batch download) and the destination file
+     at the `local_path` returned by `fetch_dest_file`.
+  3. Compare document content:
+     - **Same document** → confirmed duplicate; delete source and mark completed:
+       ```bash
+       python scripts/main.py delete_source_file \
+         --file_id <file_id> \
+         --new-name "<new_name>" \
+         --target-folder "<target_folder>"
+       ```
+       Then `rm <source_local_path>` and `rm <dest_local_path>` and continue.
+     - **Different documents** → genuine conflict; report to user:
+       > "Conflict on **[new_name]**: a different file already exists at
+       > `[target_folder]/[new_name]`.
+       > — Source: [one-line description of source content]
+       > — Existing: [one-line description of dest content]
+       > How should I handle this?"
+       Do not delete either file. Pause and wait for instruction before continuing.
+- On `"status": "error"` → log the error; delete the local temp file anyway; continue.
+
+After all files in this batch are processed and their local copies deleted, **move on to
+the next batch of 3.** Do not retain the content of the files you just read — treat them
+as done.
+
+Continue until all batches are complete.
 
 ---
 
-### Step 3.4 — Clean up temp files
+### Step 3.4 — Clean up empty non-standard folders
 
-After all files for this client have been processed (regardless of per-file errors):
+After all batches are done, check whether any non-standard folders (folders that are not
+one of the 6 standard subfolders) are now empty and can be deleted:
+
+```bash
+python scripts/main.py cleanup_empty_folders --client_id <client_id>
+```
+
+Parse JSON output:
+
+- `deleted` — list of `{name, path}` objects for folders that were empty and deleted via API.
+  Report to the user: `"Removed empty folders: [names]"`
+- `non_empty` — list of `{name, path, child_count}` objects for folders that still contain files.
+  If this list is **not empty**, report to the user:
+
+  > "The following non-standard folders still contain files and were not deleted:
+  > [name — N file(s)] …
+  > How would you like me to handle them?"
+
+  **Pause and wait for the user's instruction before continuing to the next client.**
+  Do not proceed to Step 3.5 until the user responds.
+
+---
+
+### Step 3.5 — Clean up temp directory
 
 ```bash
 python scripts/main.py cleanup_temp --client_id <client_id>
 ```
 
-This deletes `./temp_docs/<client_id>/` and frees disk space before the next client.
+This removes `./temp_docs/<client_id>/` (handles any remaining stragglers) and frees
+disk space before the next client.
 
 ---
 
-### Step 3.5 — Rename the client root folder
+### Step 3.6 — Rename the client root folder
 
 Using the client data collected during this loop iteration, determine the canonical
 folder name:
@@ -313,7 +385,7 @@ python scripts/main.py rename_client \
 
 ### Repeat for all clients
 
-After completing Steps 3.0–3.5 for one client, move to the next `client_id` in the list.
+After completing Steps 3.0–3.6 for one client, move to the next `client_id` in the list.
 Continue until all ready clients are processed or a pause is detected.
 
 ---
@@ -407,9 +479,11 @@ If yes, read and display the file with reasons grouped by `not_ready_reason`.
 |-----------|--------|
 | Auth expired mid-run | Re-run `auth`; if `auth_required`, show URL again |
 | Single file download fails | Log and skip; continue to next file |
+| `process_file` → `duplicate_resolved_by_size` | Same-size file at dest confirmed duplicate; source deleted automatically |
+| `process_file` → `duplicate_uncertain` | Download dest, read both, compare content; resolve or pause for user |
 | Single `process_file` fails | Log and skip; continue to next file |
 | `rename_client` fails | Log error; mark client failed; continue to next client |
-| `stage_client_files` returns empty | Skip 3.2 and 3.3; still run 3.4 and 3.5 |
+| `stage_client_files` returns empty | Skip 3.2–3.4; still run 3.5 and 3.6 |
 | Network error (5xx) | Retry once after 5 seconds; if still failing, log and continue |
 
 **Never abort the entire run due to a single client or file failure.**
