@@ -922,7 +922,7 @@ def cmd_process_file(args):
     src_folder = source_path.rsplit("/", 1)[0]
     src_filename = source_path.rsplit("/", 1)[1]
     api_path = f"/nodes/pth/{pth_enc(src_folder)}/{urllib.parse.quote(src_filename, safe='')}"
-    body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
+    body = {"move": {"dst_uri": f"/nodes/pth/{dest_path}", "replace": "Replace"}}
 
     move_error = None
     try:
@@ -1158,7 +1158,7 @@ def cmd_rename_client(args):
     orig_vault = row["original_vault_path"] or vault_path
     orig_display = row["original_display_name"] or row["display_name"]
 
-    body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
+    body = {"move": {"dst_uri": f"/nodes/pth/{dest_path}", "replace": "Replace"}}
 
     try:
         result = api_post(f"/nodes/pth/{pth_enc(vault_path)}", token, config, body)
@@ -1247,7 +1247,7 @@ def cmd_revert_client(args):
         src_folder   = current_path.rsplit("/", 1)[0]
         src_filename = current_path.rsplit("/", 1)[1]
         api_path = f"/nodes/pth/{pth_enc(src_folder)}/{urllib.parse.quote(src_filename, safe='')}"
-        body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(dest_path)}", "replace": "Replace"}}
+        body = {"move": {"dst_uri": f"/nodes/pth/{dest_path}", "replace": "Replace"}}
 
         try:
             result = api_post(api_path, token, config, body)
@@ -1265,7 +1265,7 @@ def cmd_revert_client(args):
     folder_reverted = False
     orig_vault = client_row["original_vault_path"]
     if orig_vault and orig_vault != client_row["vault_path"]:
-        body = {"move": {"dst_uri": f"/nodes/pth/{pth_enc(orig_vault)}", "replace": "Replace"}}
+        body = {"move": {"dst_uri": f"/nodes/pth/{orig_vault}", "replace": "Replace"}}
         try:
             result = api_post(f"/nodes/pth/{pth_enc(client_row['vault_path'])}", token, config, body)
             if not (result.get("error") or {}).get("success"):
